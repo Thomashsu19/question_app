@@ -3,6 +3,7 @@ import pandas as pd
 import random
 import datetime
 from flask import Flask, session, redirect, url_for, request, render_template_string
+QUIZ_QUESTION_COUNT = 50
 
 # Flask secret key for session management
 app = Flask(__name__)
@@ -11,79 +12,81 @@ app.secret_key = 'my_super_secret_key_for_local_quiz'
 
 print("Libraries loaded and Flask app initialized.")
 
-# Define the directory for correctly answered questions
-correct_dir = '正確'
-if not os.path.exists(correct_dir):
-    os.makedirs(correct_dir)
-    print(f"Created directory: {correct_dir} for correct answers.")
+def make_question():
+    # Define the directory for correctly answered questions
+    correct_dir = '正確'
+    if not os.path.exists(correct_dir):
+        os.makedirs(correct_dir)
+        print(f"Created directory: {correct_dir} for correct answers.")
 
-# Load the combined CSV data
-try:
-    combined_df = pd.read_csv('combined_tables.csv')
-    print("Combined CSV loaded successfully.")
+    # Load the combined CSV data
+    try:
+        combined_df = pd.read_csv('combined_tables.csv')
+        print("Combined CSV loaded successfully.")
 
-    # Basic data cleaning: drop rows where '試題' or '答案' are missing
-    combined_df['答案'] = combined_df['答案'].astype(str)
-    combined_df['試題'] = combined_df['試題'].astype(str).str.replace(r'\s+', '', regex=True)
-    combined_df['答案'] = combined_df['答案'].str.replace(r'\s+', '', regex=True)
+        # Basic data cleaning: drop rows where '試題' or '答案' are missing
+        combined_df['答案'] = combined_df['答案'].astype(str)
+        combined_df['試題'] = combined_df['試題'].astype(str).str.replace(r'\s+', '', regex=True)
+        combined_df['答案'] = combined_df['答案'].str.replace(r'\s+', '', regex=True)
 
-    # 使用正則表達式，找出半形的 (1)~(4) 或全形的 （1）~（4），並在前面加上換行符號 \n
-    combined_df['試題'] = combined_df['試題'].str.replace(r'(\([1-4]\))', r'\n\1', regex=True)
-    combined_df['試題'] = combined_df['試題'].str.replace(r'(（[1-4]）)', r'\n\1', regex=True)
-    # 把可能產生超過兩個以上的連續換行，縮減為單一換行，確保版面乾淨
-    combined_df['試題'] = combined_df['試題'].str.replace(r'\n\s*\n', '\n', regex=True)
+        # 使用正則表達式，找出半形的 (1)~(4) 或全形的 （1）~（4），並在前面加上換行符號 \n
+        combined_df['試題'] = combined_df['試題'].str.replace(r'(\([1-4]\))', r'\n\1', regex=True)
+        combined_df['試題'] = combined_df['試題'].str.replace(r'(（[1-4]）)', r'\n\1', regex=True)
+        # 把可能產生超過兩個以上的連續換行，縮減為單一換行，確保版面乾淨
+        combined_df['試題'] = combined_df['試題'].str.replace(r'\n\s*\n', '\n', regex=True)
 
-    print(f"Total valid questions after cleaning: {len(combined_df)}")
+        print(f"Total valid questions after cleaning: {len(combined_df)}")
 
-    # --- Load previously correctly answered questions and filter them out ---
-    correct_csv_files = [os.path.join(correct_dir, f) for f in os.listdir(correct_dir) if f.endswith('.csv')]
-    if correct_csv_files:
-        all_correct_dfs = []
-        for f in correct_csv_files:
-            try:
-                all_correct_dfs.append(pd.read_csv(f))
-            except Exception as e:
-                print(f"Error loading previous correct answers from {f}: {e}")
-        
-        if all_correct_dfs:
-            previously_correct_df = pd.concat(all_correct_dfs, ignore_index=True)
-            # Use '題號' to identify unique questions
-            previously_correct_unique = previously_correct_df[['題號']].drop_duplicates()
+        # --- Load previously correctly answered questions and filter them out ---
+        correct_csv_files = [os.path.join(correct_dir, f) for f in os.listdir(correct_dir) if f.endswith('.csv')]
+        if correct_csv_files:
+            all_correct_dfs = []
+            for f in correct_csv_files:
+                try:
+                    all_correct_dfs.append(pd.read_csv(f))
+                except Exception as e:
+                    print(f"Error loading previous correct answers from {f}: {e}")
             
-            # Filter combined_df to exclude questions already answered correctly
-            merged = combined_df.merge(
-                previously_correct_unique,
-                on=['題號'],
-                how='left',
-                indicator=True
-            )
-            combined_df = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge'])
-            print(f"Removed {len(merged) - len(combined_df)} previously correct questions. Remaining: {len(combined_df)}")
+            if all_correct_dfs:
+                previously_correct_df = pd.concat(all_correct_dfs, ignore_index=True)
+                # Use '題號' to identify unique questions
+                previously_correct_unique = previously_correct_df[['題號']].drop_duplicates()
+                
+                # Filter combined_df to exclude questions already answered correctly
+                merged = combined_df.merge(
+                    previously_correct_unique,
+                    on=['題號'],
+                    how='left',
+                    indicator=True
+                )
+                combined_df = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge'])
+                print(f"Removed {len(merged) - len(combined_df)} previously correct questions. Remaining: {len(combined_df)}")
 
-except FileNotFoundError:
-    print("Error: combined_tables.csv not found. Please ensure the previous step to merge CSVs was successful.")
-    combined_df = pd.DataFrame()
-except Exception as e:
-    print(f"Error loading combined_tables.csv: {e}")
-    combined_df = pd.DataFrame()
+    except FileNotFoundError:
+        print("Error: combined_tables.csv not found. Please ensure the previous step to merge CSVs was successful.")
+        combined_df = pd.DataFrame()
+    except Exception as e:
+        print(f"Error loading combined_tables.csv: {e}")
+        combined_df = pd.DataFrame()
 
 
-# --- Question Selection Logic ---
-QUIZ_QUESTION_COUNT = 50
-quiz_questions = []
+    # --- Question Selection Logic ---
+    
+    quiz_questions = []
 
-if not combined_df.empty:
-    total_available_questions = len(combined_df)
+    if not combined_df.empty:
+        total_available_questions = len(combined_df)
 
-    if total_available_questions == 0:
-        print("No valid questions to create a quiz.")
+        if total_available_questions == 0:
+            print("No valid questions to create a quiz.")
+        else:
+            # Directly sample 50 questions randomly
+            num_to_select = min(QUIZ_QUESTION_COUNT, total_available_questions)
+            quiz_questions = combined_df.sample(n=num_to_select).to_dict(orient='records')
+            print(f"Selected {len(quiz_questions)} questions randomly for the quiz.")
     else:
-        # Directly sample 50 questions randomly
-        num_to_select = min(QUIZ_QUESTION_COUNT, total_available_questions)
-        quiz_questions = combined_df.sample(n=num_to_select).to_dict(orient='records')
-        print(f"Selected {len(quiz_questions)} questions randomly for the quiz.")
-else:
-    print("No questions available after loading or cleaning data.")
+        print("No questions available after loading or cleaning data.")
+    return quiz_questions
 
 
 # --- Flask Web Application HTML Templates ---
@@ -353,9 +356,12 @@ def answer():
 @app.route('/restart')
 def restart():
     session.clear()
+    quiz_questions.clear()
+    quiz_questions.extend(make_question())
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
+    quiz_questions = make_question()
     if quiz_questions:
         print(f"Starting quiz server on http://127.0.0.1:5000/")
         app.run(host='127.0.0.1', port=5000, debug=True)
