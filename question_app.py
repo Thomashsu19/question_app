@@ -3,7 +3,7 @@ import pandas as pd
 import random
 import datetime
 from flask import Flask, session, redirect, url_for, request, render_template_string
-QUIZ_QUESTION_COUNT = 50
+QUIZ_QUESTION_COUNT = 25
 
 # Flask secret key for session management
 app = Flask(__name__)
